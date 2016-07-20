@@ -52,8 +52,11 @@ goog.require('goog.string');
  * @constructor
  */
 Blockly.Block = function(workspace, prototypeName, opt_id) {
+  var flyoutWorkspace = workspace && workspace.getFlyout && workspace.getFlyout() ?
+     workspace.getFlyout().getWorkspace() : null;
   /** @type {string} */
-  this.id = (opt_id && !workspace.getBlockById(opt_id)) ?
+  this.id = (opt_id && !workspace.getBlockById(opt_id) &&
+      (!flyoutWorkspace || !flyoutWorkspace.getBlockById(opt_id))) ?
       opt_id : Blockly.genUid();
   workspace.blockDB_[this.id] = this;
   /** @type {Blockly.Connection} */
@@ -115,8 +118,20 @@ Blockly.Block = function(workspace, prototypeName, opt_id) {
    */
   this.collapsed_ = false;
 
+  /**
+   * @type {boolean}
+   * @private
+   */
+  this.checkboxInFlyout_ = false;
+
   /** @type {string|Blockly.Comment} */
   this.comment = null;
+
+  /**
+   * @type {?number}
+   * @private
+   */
+  this.outputShape_ = null;
 
   /**
    * @type {!goog.math.Coordinate}
@@ -175,21 +190,21 @@ Blockly.Block.prototype.data = null;
  * @type {string}
  * @private
  */
-Blockly.Block.prototype.colour_ = '#000000';
+Blockly.Block.prototype.colour_ = '#FF0000';
 
 /**
  * Secondary colour of the block in '#RRGGBB' format.
  * @type {string}
  * @private
  */
-Blockly.Block.prototype.colourSecondary_ = '#000000';
+Blockly.Block.prototype.colourSecondary_ = '#FF0000';
 
 /**
  * Tertiary colour of the block in '#RRGGBB' format.
  * @type {string}
  * @private
  */
-Blockly.Block.prototype.colourTertiary_ = '#000000';
+Blockly.Block.prototype.colourTertiary_ = '#FF0000';
 
 /**
  * Dispose of this block.
@@ -208,43 +223,46 @@ Blockly.Block.prototype.dispose = function(healStack) {
   }
   Blockly.Events.disable();
 
-  // This block is now at the top of the workspace.
-  // Remove this block from the workspace's list of top-most blocks.
-  if (this.workspace) {
-    this.workspace.removeTopBlock(this);
-    // Remove from block database.
-    delete this.workspace.blockDB_[this.id];
-    this.workspace = null;
-  }
-
-  // Just deleting this block from the DOM would result in a memory leak as
-  // well as corruption of the connection database.  Therefore we must
-  // methodically step through the blocks and carefully disassemble them.
-
-  if (Blockly.selected == this) {
-    Blockly.selected = null;
-  }
-
-  // First, dispose of all my children.
-  for (var i = this.childBlocks_.length - 1; i >= 0; i--) {
-    this.childBlocks_[i].dispose(false);
-  }
-  // Then dispose of myself.
-  // Dispose of all inputs and their fields.
-  for (var i = 0, input; input = this.inputList[i]; i++) {
-    input.dispose();
-  }
-  this.inputList.length = 0;
-  // Dispose of any remaining connections (next/previous/output).
-  var connections = this.getConnections_(true);
-  for (var i = 0; i < connections.length; i++) {
-    var connection = connections[i];
-    if (connection.isConnected()) {
-      connection.disconnect();
+  try {
+    // This block is now at the top of the workspace.
+    // Remove this block from the workspace's list of top-most blocks.
+    if (this.workspace) {
+      this.workspace.removeTopBlock(this);
+      // Remove from block database.
+      delete this.workspace.blockDB_[this.id];
+      this.workspace = null;
     }
-    connections[i].dispose();
+
+    // Just deleting this block from the DOM would result in a memory leak as
+    // well as corruption of the connection database.  Therefore we must
+    // methodically step through the blocks and carefully disassemble them.
+
+    if (Blockly.selected == this) {
+      Blockly.selected = null;
+    }
+
+    // First, dispose of all my children.
+    for (var i = this.childBlocks_.length - 1; i >= 0; i--) {
+      this.childBlocks_[i].dispose(false);
+    }
+    // Then dispose of myself.
+    // Dispose of all inputs and their fields.
+    for (var i = 0, input; input = this.inputList[i]; i++) {
+      input.dispose();
+    }
+    this.inputList.length = 0;
+    // Dispose of any remaining connections (next/previous/output).
+    var connections = this.getConnections_(true);
+    for (var i = 0; i < connections.length; i++) {
+      var connection = connections[i];
+      if (connection.isConnected()) {
+        connection.disconnect();
+      }
+      connections[i].dispose();
+    }
+  } finally {
+    Blockly.Events.enable();
   }
-  Blockly.Events.enable();
 };
 
 /**
@@ -1115,6 +1133,12 @@ Blockly.Block.prototype.jsonInit = function(json) {
   if (json['helpUrl'] !== undefined) {
     this.setHelpUrl(json['helpUrl']);
   }
+  if (json['outputShape'] !== undefined) {
+    this.setOutputShape(json['outputShape']);
+  }
+  if (json['checkboxInFlyout'] !== undefined) {
+    this.setCheckboxInFlyout(json['checkboxInFlyout']);
+  }
 };
 
 /**
@@ -1127,7 +1151,7 @@ Blockly.Block.prototype.jsonInit = function(json) {
  * @private
  */
 Blockly.Block.prototype.interpolate_ = function(message, args, lastDummyAlign) {
-  var tokens = Blockly.tokenizeInterpolation(message);
+  var tokens = Blockly.utils.tokenizeInterpolation(message);
   // Interpolate the arguments.  Build a list of elements.
   var indexDup = [];
   var indexCount = 0;
@@ -1200,8 +1224,8 @@ Blockly.Block.prototype.interpolate_ = function(message, args, lastDummyAlign) {
             field = new Blockly.FieldAngle(element['angle']);
             break;
           case 'field_number':
-            field = new Blockly.FieldNumber(element['number'], null,
-              element['precision'], element['min'], element['max']);
+            field = new Blockly.FieldNumber(element['value'],
+              element['min'], element['max'], element['precision']);
             break;
           case 'field_checkbox':
             field = new Blockly.FieldCheckbox(
@@ -1406,6 +1430,40 @@ Blockly.Block.prototype.setCommentText = function(text) {
         this, 'comment', null, this.comment, text || ''));
     this.comment = text;
   }
+};
+
+/**
+ * Set this block's output shape.
+ * e.g., null, OUTPUT_SHAPE_HEXAGONAL, OUTPUT_SHAPE_ROUND, OUTPUT_SHAPE_SQUARE.
+ * @param {?number} outputShape Value representing output shape
+ *     (see constants.js).
+ */
+Blockly.Block.prototype.setOutputShape = function(outputShape) {
+  this.outputShape_ = outputShape;
+};
+
+/**
+ * Get this block's output shape.
+ * @return {?number} Value representing output shape (see constants.js).
+ */
+Blockly.Block.prototype.getOutputShape = function() {
+  return this.outputShape_;
+};
+
+/**
+ * Set whether this block has a checkbox next to it in the flyout.
+ * @param {boolean} hasCheckbox True if this block should have a checkbox.
+ */
+Blockly.Block.prototype.setCheckboxInFlyout = function(hasCheckbox) {
+  this.checkboxInFlyout_ = hasCheckbox;
+};
+
+/**
+ * Get whether this block has a checkbox next to it in the flyout.
+ * @return {boolean} True if this block should have a checkbox.
+ */
+Blockly.Block.prototype.hasCheckboxInFlyout = function() {
+  return this.checkboxInFlyout_;
 };
 
 /**

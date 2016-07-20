@@ -121,7 +121,13 @@ Blockly.Css.setCursor = function(cursor) {
     return;
   }
   Blockly.Css.currentCursor_ = cursor;
-  var url = 'url(' + Blockly.Css.mediaPath_ + '/' + cursor + '.cur), auto';
+  var url;
+  if (cursor == Blockly.Css.Cursor.OPEN) {
+    // Scratch-specific: use CSS default cursor instead of "open hand."
+    url = 'default';
+  } else {
+    url = 'url(' + Blockly.Css.mediaPath_ + '/' + cursor + '.cur), auto';
+  }
   // There are potentially hundreds of draggable objects.  Changing their style
   // properties individually is too slow, so change the CSS rule instead.
   var rule = '.blocklyDraggable {\n  cursor: ' + url + ';\n}\n';
@@ -216,7 +222,7 @@ Blockly.Css.CONTENT = [
   '}',
 
   '.blocklyDropDownDiv {',
-    'position: absolute;',
+    'position: fixed;',
     'left: 0;',
     'top: 0;',
     'z-index: 1000;',
@@ -228,6 +234,11 @@ Blockly.Css.CONTENT = [
     '-webkit-user-select: none;',
   '}',
 
+  '.blocklyDropDownContent {',
+    'max-height: 300px;', // @todo: spec for maximum height.
+    'overflow: auto;',
+  '}',
+
   '.blocklyDropDownArrow {',
     'position: absolute;',
     'left: 0;',
@@ -235,6 +246,8 @@ Blockly.Css.CONTENT = [
     'width: 16px;',
     'height: 16px;',
     'z-index: -1;',
+    'background-color: inherit;',
+    'border-color: inherit;',
   '}',
 
   '.blocklyDropDownButton {',
@@ -304,12 +317,24 @@ Blockly.Css.CONTENT = [
     'border-top: 1px solid;',
     'border-left: 1px solid;',
     'border-top-left-radius: 4px;',
+    'border-color: inherit;',
   '}',
 
   '.arrowBottom {',
     'border-bottom: 1px solid;',
     'border-right: 1px solid;',
     'border-bottom-right-radius: 4px;',
+    'border-color: inherit;',
+  '}',
+
+  '.valueReportBox {',
+    'min-width: 50px;',
+    'max-width: 300px;',
+    'max-height: 200px;',
+    'overflow: auto;',
+    'word-wrap: break-word;',
+    'text-align: center;',
+    'font-size: .8em;',
   '}',
 
   '.blocklyResizeSE {',
@@ -351,7 +376,6 @@ Blockly.Css.CONTENT = [
   '}',
 
   '.blocklyText {',
-    'cursor: default;',
     'fill: #fff;',
     'font-family: sans-serif;',
     'font-size: 12pt;',
@@ -677,7 +701,6 @@ Blockly.Css.CONTENT = [
   '}',
 
   '.blocklyWidgetDiv .goog-palette-table {',
-    'border: 1px solid #666;',
     'border-collapse: collapse;',
   '}',
 
@@ -688,7 +711,6 @@ Blockly.Css.CONTENT = [
     'border: 0;',
     'text-align: center;',
     'vertical-align: middle;',
-    'border-right: 1px solid #666;',
     'font-size: 1px;',
   '}',
 
@@ -696,15 +718,16 @@ Blockly.Css.CONTENT = [
     'position: relative;',
     'height: 13px;',
     'width: 15px;',
-    'border: 1px solid #666;',
   '}',
 
   '.blocklyWidgetDiv .goog-palette-cell-hover .goog-palette-colorswatch {',
     'border: 1px solid #FFF;',
+    'box-sizing: border-box;',
   '}',
 
   '.blocklyWidgetDiv .goog-palette-cell-selected .goog-palette-colorswatch {',
     'border: 1px solid #000;',
+    'box-sizing: border-box;',
     'color: #fff;',
   '}',
 
@@ -830,7 +853,7 @@ Blockly.Css.CONTENT = [
 
   /* State: disabled. */
   '.blocklyWidgetDiv .goog-menuitem-disabled .goog-menuitem-accel,',
-  '.blocklyWidgetDiv .goog-menuitem-disabled .goog-menuitem-content ',
+  '.blocklyWidgetDiv .goog-menuitem-disabled .goog-menuitem-content, ',
   '.blocklyDropDownDiv .goog-menuitem-disabled .goog-menuitem-accel,',
   '.blocklyDropDownDiv .goog-menuitem-disabled .goog-menuitem-content {',
     'color: #ccc !important;',
@@ -950,6 +973,14 @@ Blockly.Css.CONTENT = [
     'border-top: 1px solid #ccc;',
     'margin: 4px 0;',
     'padding: 0;',
+  '}',
+
+  '.blocklyFlyoutCheckbox {',
+    'fill: red',
+  '}',
+
+  '.blocklyFlyoutCheckbox.checked {',
+    'fill: blue',
   '}',
 
   ''

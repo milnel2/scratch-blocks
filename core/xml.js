@@ -26,8 +26,6 @@
 
 goog.provide('Blockly.Xml');
 
-// TODO(scr): Fix circular dependencies
-// goog.require('Blockly.Block');
 goog.require('goog.asserts');
 goog.require('goog.dom');
 
@@ -296,7 +294,11 @@ Blockly.Xml.domToWorkspace = function(xml, workspace) {
   for (var i = 0; i < childCount; i++) {
     var xmlChild = xml.childNodes[i];
     var name = xmlChild.nodeName.toLowerCase();
-    if (name == 'block') {
+    if (name == 'block' ||
+        (name == 'shadow' && !Blockly.Events.recordUndo)) {
+      // Allow top-level shadow blocks if recordUndo is disabled since
+      // that means an undo is in progress.  Such a block is expected
+      // to be moved to a nested destination in the next operation.
       var block = Blockly.Xml.domToBlock(xmlChild, workspace);
       var blockX = parseInt(xmlChild.getAttribute('x'), 10);
       var blockY = parseInt(xmlChild.getAttribute('y'), 10);
@@ -330,35 +332,37 @@ Blockly.Xml.domToBlock = function(xmlBlock, workspace) {
   }
   // Create top-level block.
   Blockly.Events.disable();
-  var topBlock = Blockly.Xml.domToBlockHeadless_(xmlBlock, workspace);
-  if (workspace.rendered) {
-    // Hide connections to speed up assembly.
-    topBlock.setConnectionsHidden(true);
-    // Generate list of all blocks.
-    var blocks = topBlock.getDescendants();
-    // Render each block.
-    for (var i = blocks.length - 1; i >= 0; i--) {
-      blocks[i].initSvg();
-    }
-    for (var i = blocks.length - 1; i >= 0; i--) {
-      blocks[i].render(false);
-    }
-    // Populating the connection database may be defered until after the blocks
-    // have rendered.
-    if (!workspace.isFlyout) {
-      setTimeout(function() {
-        if (topBlock.workspace) {  // Check that the block hasn't been deleted.
-          topBlock.setConnectionsHidden(false);
-        }
-      }, 1);
+  try {
+    var topBlock = Blockly.Xml.domToBlockHeadless_(xmlBlock, workspace);
+    if (workspace.rendered) {
+      // Hide connections to speed up assembly.
+      topBlock.setConnectionsHidden(true);
+      // Generate list of all blocks.
+      var blocks = topBlock.getDescendants();
+      // Render each block.
+      for (var i = blocks.length - 1; i >= 0; i--) {
+        blocks[i].initSvg();
+      }
+      for (var i = blocks.length - 1; i >= 0; i--) {
+        blocks[i].render(false);
+      }
+      // Populating the connection database may be defered until after the
+      // blocks have rendered.
+      if (!workspace.isFlyout) {
+        setTimeout(function() {
+          if (topBlock.workspace) {  // Check that the block hasn't been deleted.
+            topBlock.setConnectionsHidden(false);
+          }
+        }, 1);
+      }
     }
     topBlock.updateDisabled();
-    // Fire an event to allow scrollbars to resize.
-    if (!workspace.isFlyout) {
-      Blockly.asyncSvgResize(workspace);
-    }
+    // Allow the scrollbars to resize and move based on the new contents.
+    // TODO(@picklesrus): #387. Remove when domToBlock avoids resizing.
+    Blockly.resizeSvgContents(workspace);
+  } finally {
+    Blockly.Events.enable();
   }
-  Blockly.Events.enable();
   if (Blockly.Events.isEnabled()) {
     Blockly.Events.fire(new Blockly.Events.Create(topBlock));
   }
@@ -532,10 +536,6 @@ Blockly.Xml.domToBlockHeadless_ = function(xmlBlock, workspace) {
                           'Shadow block not allowed non-shadow child.');
     }
     block.setShadow(true);
-  }
-  // Give the block a chance to clean up any initial inputs.
-  if (block.validate) {
-    block.validate();
   }
   return block;
 };

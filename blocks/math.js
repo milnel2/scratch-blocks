@@ -30,61 +30,114 @@ goog.require('Blockly.Blocks');
 
 goog.require('Blockly.Colours');
 
-
-/**
- * Common HSV hue for all blocks in this category.
- */
-Blockly.Blocks.math.HUE = Blockly.Colours.textField;
+goog.require('Blockly.constants');
 
 Blockly.Blocks['math_number'] = {
   /**
-   * Block for numeric value.
+   * Block for generic numeric value.
    * @this Blockly.Block
    */
   init: function() {
-    this.setHelpUrl(Blockly.Msg.MATH_NUMBER_HELPURL);
-    this.setColour(Blockly.Blocks.math.HUE);
-    this.appendDummyInput()
-        .appendField(new Blockly.FieldNumber('0',
-        Blockly.FieldTextInput.numberValidator, 20, -Infinity, Infinity), 'NUM');
-    this.setOutput(true, 'Number');
-    // Assign 'this' to a variable for use in the tooltip closure below.
-    var thisBlock = this;
-    // Number block is trivial.  Use tooltip of parent block if it exists.
-    this.setTooltip(function() {
-      var parent = thisBlock.getParent();
-      return (parent && parent.getInputsInline() && parent.tooltip) ||
-          Blockly.Msg.MATH_NUMBER_TOOLTIP;
+    this.jsonInit({
+      "message0": "%1",
+      "args0": [
+        {
+          "type": "field_number",
+          "name": "NUM"
+        }
+      ],
+      "output": "Number",
+      "outputShape": Blockly.OUTPUT_SHAPE_ROUND,
+      "colour": Blockly.Colours.textField
+    });
+  }
+};
+
+Blockly.Blocks['math_integer'] = {
+  /**
+   * Block for integer value (no decimal, + or -).
+   * @this Blockly.Block
+   */
+  init: function() {
+    this.jsonInit({
+      "message0": "%1",
+      "args0": [
+        {
+          "type": "field_number",
+          "name": "NUM",
+          "precision": 1
+        }
+      ],
+      "output": "Number",
+      "outputShape": Blockly.OUTPUT_SHAPE_ROUND,
+      "colour": Blockly.Colours.textField
     });
   }
 };
 
 Blockly.Blocks['math_whole_number'] = {
   /**
-   * Block for whole number value, with min of 0 and max Infinity, precision 0.
+   * Block for whole number value, no negatives or decimals.
    * @this Blockly.Block
    */
   init: function() {
-    this.setHelpUrl(Blockly.Msg.MATH_NUMBER_HELPURL);
-    this.setColour(Blockly.Blocks.math.HUE);
-    this.appendDummyInput()
-        .appendField(new Blockly.FieldNumber('0',
-        Blockly.FieldNumber.numberValidator, 0, 0, Infinity), 'NUM');
-    this.setOutput(true, 'Number');
+    this.jsonInit({
+      "message0": "%1",
+      "args0": [
+        {
+          "type": "field_number",
+          "name": "NUM",
+          "min": 0,
+          "precision": 1
+        }
+      ],
+      "output": "Number",
+      "outputShape": Blockly.OUTPUT_SHAPE_ROUND,
+      "colour": Blockly.Colours.textField
+    });
   }
 };
 
 Blockly.Blocks['math_positive_number'] = {
   /**
-   * Block for positive number value, with min of 0 and max Infinity, precision 20.
+   * Block for positive number value, with decimal.
    * @this Blockly.Block
    */
   init: function() {
-    this.setHelpUrl(Blockly.Msg.MATH_NUMBER_HELPURL);
-    this.setColour(Blockly.Blocks.math.HUE);
-    this.appendDummyInput()
-        .appendField(new Blockly.FieldNumber('0',
-        Blockly.FieldNumber.numberValidator, 20, 0, Infinity), 'NUM');
-    this.setOutput(true, 'Number');
+    this.jsonInit({
+      "message0": "%1",
+      "args0": [
+        {
+          "type": "field_number",
+          "name": "NUM",
+          "min": 0
+        }
+      ],
+      "output": "Number",
+      "outputShape": Blockly.OUTPUT_SHAPE_ROUND,
+      "colour": Blockly.Colours.textField
+    });
+  }
+};
+
+Blockly.Blocks['math_angle'] = {
+  /**
+   * Block for angle picker.
+   * @this Blockly.Block
+   */
+  init: function() {
+    this.jsonInit({
+      "message0": "%1",
+      "args0": [
+        {
+          "type": "field_angle",
+          "name": "NUM",
+          "value": 90
+        }
+      ],
+      "output": "Number",
+      "outputShape": Blockly.OUTPUT_SHAPE_ROUND,
+      "colour": Blockly.Colours.textField
+    });
   }
 };

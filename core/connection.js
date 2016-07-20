@@ -54,24 +54,6 @@ Blockly.Connection = function(source, type) {
 };
 
 /**
- * Constant for identifying connections that accept a boolean.
- * @const
- */
-Blockly.Connection.BOOLEAN = 1;
-
-/**
- * Constant for identifying connections that accept a string.
- * @const
- */
-Blockly.Connection.STRING = 2;
-
-/**
- * Constant for identifying connections that accept a number OR null.
- * @const
- */
-Blockly.Connection.NUMBER = 3;
-
-/**
  * Constants for checking whether two connections are compatible.
  */
 Blockly.Connection.CAN_CONNECT = 0;
@@ -182,21 +164,6 @@ Blockly.Connection.prototype.connect_ = function(childConnection) {
       shadowDom = Blockly.Xml.blockToDom(orphanBlock);
       orphanBlock.dispose();
       orphanBlock = null;
-    } else if (parentConnection.type == Blockly.INPUT_VALUE) {
-      // Value connections.
-      // If female block is already connected, disconnect and bump the male.
-      if (!orphanBlock.outputConnection) {
-        throw 'Orphan block does not have an output connection.';
-      }
-      // Attempt to reattach the orphan at the end of the newly inserted
-      // block.  Since this block may be a row, walk down to the end
-      // or to the first (and only) shadow block.
-      var connection = Blockly.Connection.lastConnectionInRow_(
-          childBlock, orphanBlock);
-      if (connection) {
-        orphanBlock.outputConnection.connect(connection);
-        orphanBlock = null;
-      }
     } else if (parentConnection.type == Blockly.NEXT_STATEMENT) {
       // Statement connections.
       // Statement blocks may be inserted into the middle of a stack.
@@ -208,8 +175,9 @@ Blockly.Connection.prototype.connect_ = function(childConnection) {
       // block.  Since this block may be a stack, walk down to the end.
       var newBlock = childBlock;
       while (newBlock.nextConnection) {
-        if (newBlock.nextConnection.isConnected()) {
-          newBlock = newBlock.getNextBlock();
+        var nextBlock = newBlock.getNextBlock();
+        if (nextBlock && !nextBlock.isShadow()) {
+          newBlock = nextBlock;
         } else {
           if (orphanBlock.previousConnection.checkType_(
               newBlock.nextConnection)) {
@@ -324,6 +292,9 @@ Blockly.Connection.prototype.isConnected = function() {
  * @private
  */
 Blockly.Connection.prototype.canConnectWithReason_ = function(target) {
+  if (!target) {
+    return Blockly.Connection.REASON_TARGET_NULL;
+  }
   if (this.isSuperior()) {
     var blockA = this.sourceBlock_;
     var blockB = target.getSourceBlock();
@@ -331,9 +302,7 @@ Blockly.Connection.prototype.canConnectWithReason_ = function(target) {
     var blockB = this.sourceBlock_;
     var blockA = target.getSourceBlock();
   }
-  if (!target) {
-    return Blockly.Connection.REASON_TARGET_NULL;
-  } else if (blockA && blockA == blockB) {
+  if (blockA && blockA == blockB) {
     return Blockly.Connection.REASON_SELF_CONNECTION;
   } else if (target.type != Blockly.OPPOSITE_TYPE[this.type]) {
     return Blockly.Connection.REASON_WRONG_TYPE;
@@ -392,8 +361,7 @@ Blockly.Connection.prototype.isConnectionAllowed = function(candidate) {
 
   // Type checking.
   var canConnect = this.canConnectWithReason_(candidate);
-  if (canConnect != Blockly.Connection.CAN_CONNECT &&
-      canConnect != Blockly.Connection.REASON_MUST_DISCONNECT) {
+  if (canConnect != Blockly.Connection.CAN_CONNECT) {
     return false;
   }
 
@@ -536,38 +504,12 @@ Blockly.Connection.singleConnection_ = function(block, orphanBlock) {
     if (thisConnection && thisConnection.type == Blockly.INPUT_VALUE &&
         orphanBlock.outputConnection.checkType_(thisConnection)) {
       if (connection) {
-        return null;  // More than one connection.
+        return null;  // More than   one connection.
       }
       connection = thisConnection;
     }
   }
   return connection;
-};
-
-/**
- * Walks down a row a blocks, at each stage checking if there are any
- * connections that will accept the orphaned block.  If at any point there
- * are zero or multiple eligible connections, returns null.  Otherwise
- * returns the only input on the last block in the chain.
- * Terminates early for shadow blocks.
- * @param {!Blockly.Block} startBlock The block on which to start the search.
- * @param {!Blockly.Block} orphanBlock The block that is looking for a home.
- * @return {Blockly.Connection} The suitable connection point on the chain
- *    of blocks, or null.
- * @private
- */
-Blockly.Connection.lastConnectionInRow_ = function(startBlock, orphanBlock) {
-  var newBlock = startBlock;
-  var connection;
-  while (connection = Blockly.Connection.singleConnection_(
-      /** @type {!Blockly.Block} */ (newBlock), orphanBlock)) {
-    // '=' is intentional in line above.
-    newBlock = connection.targetBlock();
-    if (!newBlock || newBlock.isShadow()) {
-      return connection;
-    }
-  }
-  return null;
 };
 
 /**
@@ -619,8 +561,6 @@ Blockly.Connection.prototype.disconnectInternal_ = function(parentBlock,
 
 /**
  * Respawn the shadow block if there was one connected to the this connection.
- * @return {Blockly.Block} The newly spawned shadow block, or null if none was
- *    spawned.
  * @private
  */
 Blockly.Connection.prototype.respawnShadow_ = function() {
@@ -636,9 +576,7 @@ Blockly.Connection.prototype.respawnShadow_ = function() {
     } else {
       throw 'Child block does not have output or previous statement.';
     }
-    return blockShadow;
   }
-  return null;
 };
 
 /**
@@ -703,18 +641,21 @@ Blockly.Connection.prototype.setCheck = function(check) {
 
 /**
  * Returns a shape enum for this connection.
+ * Used in scratch-blocks to draw unoccupied inputs.
  * @return {number} Enum representing shape.
  */
 Blockly.Connection.prototype.getOutputShape = function() {
-  if (!this.check_) return Blockly.Connection.NUMBER;
+  if (!this.check_) return Blockly.OUTPUT_SHAPE_SQUARE;
   if (this.check_.indexOf('Boolean') !== -1) {
-    return Blockly.Connection.BOOLEAN;
+    return Blockly.OUTPUT_SHAPE_HEXAGONAL;
+  }
+  if (this.check_.indexOf('Number') !== -1) {
+    return Blockly.OUTPUT_SHAPE_ROUND;
   }
   if (this.check_.indexOf('String') !== -1) {
-    return Blockly.Connection.STRING;
+    return Blockly.OUTPUT_SHAPE_SQUARE;
   }
-
-  return Blockly.Connection.NUMBER;
+  return Blockly.OUTPUT_SHAPE_SQUARE;
 };
 
 /**

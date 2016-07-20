@@ -43,12 +43,16 @@ goog.require('goog.userAgent');
  *     to validate any constraints on what the user entered.  Takes the new
  *     text as an argument and returns either the accepted text, a replacement
  *     text, or null to abort the change.
+ * @param {RegExp=} opt_restrictor An optional regular expression to restrict
+ *     typed text to. Text that doesn't match the restrictor will never show
+ *     in the text field.
  * @extends {Blockly.Field}
  * @constructor
  */
-Blockly.FieldTextInput = function(text, opt_validator) {
+Blockly.FieldTextInput = function(text, opt_validator, opt_restrictor) {
   Blockly.FieldTextInput.superClass_.constructor.call(this, text,
       opt_validator);
+  this.setRestrictor(opt_restrictor);
 };
 goog.inherits(Blockly.FieldTextInput, Blockly.Field);
 
@@ -90,11 +94,11 @@ Blockly.FieldTextInput.prototype.setValue = function(text) {
   if (text === null) {
     return;  // No change if null.
   }
-  if (this.sourceBlock_ && this.validator_) {
-    var validated = this.validator_(text);
+  if (this.sourceBlock_) {
+    var validated = this.callValidator(text);
     // If the new text is invalid, validation returns null.
     // In this case we still want to display the illegal result.
-    if (validated !== null && validated !== undefined) {
+    if (validated !== null) {
       text = validated;
     }
   }
@@ -107,6 +111,15 @@ Blockly.FieldTextInput.prototype.setValue = function(text) {
  */
 Blockly.FieldTextInput.prototype.setSpellcheck = function(check) {
   this.spellcheck_ = check;
+};
+
+/**
+ * Set the restrictor regex for this text input.
+ * Text that doesn't match the restrictor will never show in the text field.
+ * @param {?RegExp} restrictor Regular expression to restrict text.
+ */
+Blockly.FieldTextInput.prototype.setRestrictor = function(restrictor) {
+  this.restrictor_ = restrictor;
 };
 
 /**
@@ -203,11 +216,51 @@ Blockly.FieldTextInput.prototype.onHtmlInputKeyDown_ = function(e) {
 };
 
 /**
+ * Key codes that are whitelisted from the restrictor.
+ * These are only needed and used on Gecko (Firefox).
+ * See: https://github.com/LLK/scratch-blocks/issues/503.
+ */
+Blockly.FieldTextInput.GECKO_KEYCODE_WHITELIST = [
+  97, // Select all, META-A.
+  99, // Copy, META-C.
+  118, // Paste, META-V.
+  120 // Cut, META-X.
+];
+
+/**
  * Handle a change to the editor.
  * @param {!Event} e Keyboard event.
  * @private
  */
 Blockly.FieldTextInput.prototype.onHtmlInputChange_ = function(e) {
+  // Check if the key matches the restrictor.
+  if (e.type === 'keypress' && this.restrictor_) {
+    var keyCode;
+    var isWhitelisted = false;
+    if (goog.userAgent.GECKO) {
+      // e.keyCode is not available in Gecko.
+      keyCode = e.charCode;
+      // Gecko reports control characters (e.g., left, right, copy, paste)
+      // in the key event - whitelist these from being restricted.
+      // < 32 and 127 (delete) are control characters.
+      // See: http://www.theasciicode.com.ar/ascii-control-characters/delete-ascii-code-127.html
+      if (keyCode < 32 || keyCode == 127) {
+        isWhitelisted = true;
+      } else if (e.metaKey || e.ctrlKey) {
+        // For combos (ctrl-v, ctrl-c, etc.), Gecko reports the ASCII letter
+        // and the metaKey/ctrlKey flags.
+        isWhitelisted = Blockly.FieldTextInput.GECKO_KEYCODE_WHITELIST.indexOf(keyCode) > -1;
+      }
+    } else {
+      keyCode = e.keyCode;
+    }
+    var char = String.fromCharCode(keyCode);
+    if (!isWhitelisted && !this.restrictor_.test(char) && e.preventDefault) {
+      // Failed to pass restrictor.
+      e.preventDefault();
+      return;
+    }
+  }
   var htmlInput = Blockly.FieldTextInput.htmlInput_;
   // Update source block.
   var text = htmlInput.value;
@@ -215,13 +268,13 @@ Blockly.FieldTextInput.prototype.onHtmlInputChange_ = function(e) {
     htmlInput.oldValue_ = text;
     this.setValue(text);
     this.validate_();
-    this.resizeEditor_();
   } else if (goog.userAgent.WEBKIT) {
     // Cursor key.  Render the source block to show the caret moving.
     // Chrome only (version 26, OS X).
     this.sourceBlock_.render();
-    this.resizeEditor_();
   }
+  this.resizeEditor_();
+  Blockly.svgResize(this.sourceBlock_.workspace);
 };
 
 /**
@@ -233,8 +286,8 @@ Blockly.FieldTextInput.prototype.validate_ = function() {
   var valid = true;
   goog.asserts.assertObject(Blockly.FieldTextInput.htmlInput_);
   var htmlInput = Blockly.FieldTextInput.htmlInput_;
-  if (this.sourceBlock_ && this.validator_) {
-    valid = this.validator_(htmlInput.value);
+  if (this.sourceBlock_) {
+    valid = this.callValidator(htmlInput.value);
   }
   if (valid === null) {
     Blockly.addClass_(htmlInput, 'blocklyInvalidInput');
@@ -322,6 +375,9 @@ Blockly.FieldTextInput.prototype.resizeEditor_ = function() {
  * @return {Number} Border radius in px.
 */
 Blockly.FieldTextInput.prototype.getBorderRadius = function() {
+  if (this.sourceBlock_.getOutputShape() == Blockly.OUTPUT_SHAPE_ROUND) {
+    return Blockly.BlockSvg.NUMBER_FIELD_CORNER_RADIUS;
+  }
   return Blockly.BlockSvg.TEXT_FIELD_CORNER_RADIUS;
 };
 
@@ -337,12 +393,12 @@ Blockly.FieldTextInput.prototype.widgetDispose_ = function() {
     var htmlInput = Blockly.FieldTextInput.htmlInput_;
     // Save the edit (if it validates).
     var text = htmlInput.value;
-    if (thisField.sourceBlock_ && thisField.validator_) {
-      var text1 = thisField.validator_(text);
+    if (thisField.sourceBlock_) {
+      var text1 = thisField.callValidator(text);
       if (text1 === null) {
         // Invalid edit.
         text = htmlInput.defaultValue;
-      } else if (text1 !== undefined) {
+      } else {
         // Validation function has changed the text.
         text = text1;
       }
@@ -396,6 +452,8 @@ Blockly.FieldTextInput.prototype.widgetDisposeAnimationFinished_ = function() {
  * @return {?string} A string representing a valid number, or null if invalid.
  */
 Blockly.FieldTextInput.numberValidator = function(text) {
+  console.warn('Blockly.FieldTextInput.numberValidator is deprecated. ' +
+               'Use Blockly.FieldNumber instead.');
   if (text === null) {
     return null;
   }

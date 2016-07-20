@@ -88,6 +88,15 @@ Blockly.Flyout = function(workspaceOptions) {
   this.buttons_ = [];
 
   /**
+   * List of checkboxes next to variable blocks.
+   * Each element is an object containing the SVG for the checkbox, a boolean
+   * for its checked state, and the block the checkbox is associated with.
+   * @type {!Array.<!Object>}
+   * @private
+   */
+  this.checkboxes_ = [];
+
+  /**
    * List of event listeners.
    * @type {!Array.<!Array>}
    * @private
@@ -116,11 +125,18 @@ Blockly.Flyout.prototype.autoClose = true;
 Blockly.Flyout.prototype.CORNER_RADIUS = 0;
 
 /**
+ * Number of pixels the mouse must move before a drag/scroll starts. Because the
+ * drag-intention is determined when this is reached, it is larger than
+ * Blockly.DRAG_RADIUS so that the drag-direction is clearer.
+ */
+Blockly.Flyout.prototype.DRAG_RADIUS = 10;
+
+/**
  * Margin around the edges of the blocks in the flyout.
  * @type {number}
  * @const
  */
-Blockly.Flyout.prototype.MARGIN = 8;
+Blockly.Flyout.prototype.MARGIN = 12;
 
 /**
  * Top/bottom padding between scrollbar and edge of flyout background.
@@ -128,6 +144,29 @@ Blockly.Flyout.prototype.MARGIN = 8;
  * @const
  */
 Blockly.Flyout.prototype.SCROLLBAR_PADDING = 2;
+
+/**
+ * Size of a checkbox next to a variable reporter.
+ * @type {number}
+ * @const
+ */
+Blockly.Flyout.prototype.CHECKBOX_SIZE = 20;
+
+/**
+ * Space above and around the checkbox.
+ * @type {number}
+ * @const
+ */
+Blockly.Flyout.prototype.CHECKBOX_MARGIN = Blockly.Flyout.prototype.MARGIN;
+
+/**
+ * Total additional width of a row that contains a checkbox.
+ * @type {number}
+ * @const
+ */
+Blockly.Flyout.prototype.CHECKBOX_SPACE_X =
+    Blockly.Flyout.prototype.CHECKBOX_SIZE +
+    2 * Blockly.Flyout.prototype.CHECKBOX_MARGIN;
 
 /**
  * Width of flyout.
@@ -165,15 +204,18 @@ Blockly.Flyout.prototype.contentHeight_ = 0;
 Blockly.Flyout.prototype.verticalOffset_ = 0;
 
 /**
- * Range of a drag angle from a fixed flyout considered "dragging toward workspace."
+ * Range of a drag angle from a flyout considered "dragging toward workspace".
  * Drags that are within the bounds of this many degrees from the orthogonal
- * line to the flyout edge are considered to be "drags toward the workspace."
+ * line to the flyout edge are considered to be "drags toward the workspace".
  * Example:
  * Flyout                                                  Edge   Workspace
  * [block] /  <-within this angle, drags "toward workspace" |
  * [block] ---- orthogonal to flyout boundary ----          |
  * [block] \                                                |
  * The angle is given in degrees from the orthogonal.
+ *
+ * This is used to know when to create a new block and when to scroll the
+ * flyout. Setting it to 360 means that all drags create a new block.
  * @type {number}
  * @private
 */
@@ -224,10 +266,6 @@ Blockly.Flyout.prototype.init = function(targetWorkspace) {
 
   Array.prototype.push.apply(this.eventWrappers_,
       Blockly.bindEvent_(this.svgGroup_, 'wheel', this, this.wheel_));
-  if (!this.autoClose) {
-    this.filterWrapper_ = this.filterForCapacity_.bind(this);
-    this.targetWorkspace_.addChangeListener(this.filterWrapper_);
-  }
   // Dragging the flyout up and down (or left and right).
   Array.prototype.push.apply(this.eventWrappers_,
       Blockly.bindEvent_(this.svgGroup_, 'mousedown', this, this.onMouseDown_));
@@ -240,10 +278,6 @@ Blockly.Flyout.prototype.init = function(targetWorkspace) {
 Blockly.Flyout.prototype.dispose = function() {
   this.hide();
   Blockly.unbindEvent_(this.eventWrappers_);
-  if (this.filterWrapper_) {
-    this.targetWorkspace_.removeChangeListener(this.filterWrapper_);
-    this.filterWrapper_ = null;
-  }
   if (this.scrollbar_) {
     this.scrollbar_.dispose();
     this.scrollbar_ = null;
@@ -275,6 +309,14 @@ Blockly.Flyout.prototype.getWidth = function() {
  */
 Blockly.Flyout.prototype.getHeight = function() {
   return this.height_;
+};
+
+/**
+ * Get the flyout's workspace.
+ * @return {!Blockly.Workspace} Workspace on which this flyout's blocks are placed.
+ */
+Blockly.Flyout.prototype.getWorkspace = function() {
+  return this.workspace_;
 };
 
 /**
@@ -329,12 +371,12 @@ Blockly.Flyout.prototype.getMetrics_ = function() {
   var metrics = {
     viewHeight: viewHeight,
     viewWidth: viewWidth,
-    contentHeight: (optionBox.height + 2 * this.MARGIN) * this.workspace_.scale,
-    contentWidth: (optionBox.width + 2 * this.MARGIN) * this.workspace_.scale,
+    contentHeight: optionBox.height * this.workspace_.scale + 2 * this.MARGIN,
+    contentWidth: optionBox.width * this.workspace_.scale + 2 * this.MARGIN,
     viewTop: -this.workspace_.scrollY,
     viewLeft: -this.workspace_.scrollX,
-    contentTop: 0, // TODO: #349
-    contentLeft: 0, // TODO: #349
+    contentTop: optionBox.y,
+    contentLeft: optionBox.x,
     absoluteTop: absoluteTop,
     absoluteLeft: absoluteLeft
   };
@@ -477,9 +519,8 @@ Blockly.Flyout.prototype.setBackgroundPathVertical_ = function(width, height) {
  *     rounded corners.
  * @private
  */
-Blockly.Flyout.prototype.setBackgroundPathHorizontal_ =
-    function(width, height) {
-  /* eslint-disable indent */
+Blockly.Flyout.prototype.setBackgroundPathHorizontal_ = function(width,
+    height) {
   var atTop = this.toolboxPosition_ == Blockly.TOOLBOX_AT_TOP;
   // Start at top left.
   var path = ['M 0,' + (atTop ? 0 : this.CORNER_RADIUS)];
@@ -512,7 +553,7 @@ Blockly.Flyout.prototype.setBackgroundPathHorizontal_ =
     path.push('z');
   }
   this.svgBackground_.setAttribute('d', path.join(' '));
-};  /* eslint-enable indent */
+};
 
 /**
  * Scroll the flyout to the top.
@@ -620,7 +661,7 @@ Blockly.Flyout.prototype.show = function(xmlList) {
 
   this.layoutBlocks_(blocks, gaps);
 
-  // IE 11 is an incompetant browser that fails to fire mouseout events.
+  // IE 11 is an incompetent browser that fails to fire mouseout events.
   // When the mouse is over the background, deselect all blocks.
   var deselectAll = function() {
     var topBlocks = this.workspace_.getTopBlocks(false);
@@ -639,11 +680,9 @@ Blockly.Flyout.prototype.show = function(xmlList) {
   }
   this.reflow();
 
-  this.offsetHorizontalRtlBlocks(this.workspace_.getTopBlocks(false));
-  this.filterForCapacity_();
+  // Correctly position the flyout's scrollbar when it opens.
+  this.position();
 
-  // Fire a resize event to update the flyout's scrollbar.
-  Blockly.svgResize(this.workspace_);
   this.reflowWrapper_ = this.reflow.bind(this);
   this.workspace_.addChangeListener(this.reflowWrapper_);
 
@@ -656,9 +695,12 @@ Blockly.Flyout.prototype.show = function(xmlList) {
  * @private
  */
 Blockly.Flyout.prototype.layoutBlocks_ = function(blocks, gaps) {
-  var margin = this.MARGIN * this.workspace_.scale;
+  var margin = this.MARGIN;
   var cursorX = margin;
   var cursorY = margin;
+  if (this.horizontalLayout_ && this.RTL) {
+    blocks = blocks.reverse();
+  }
   for (var i = 0, block; block = blocks[i]; i++) {
     var allBlocks = block.getDescendants();
     for (var j = 0, child; child = allBlocks[j]; j++) {
@@ -669,8 +711,18 @@ Blockly.Flyout.prototype.layoutBlocks_ = function(blocks, gaps) {
     }
     var root = block.getSvgRoot();
     var blockHW = block.getHeightWidth();
-    block.moveBy((this.horizontalLayout_ && this.RTL) ? -cursorX : cursorX,
-        cursorY);
+
+    var moveX = cursorX;
+    if (this.horizontalLayout_ && this.RTL) {
+      moveX += blockHW.width;
+    }
+
+    if (!this.horizontalLayout_ && block.hasCheckboxInFlyout()) {
+      this.createCheckbox_(block, cursorX, cursorY, blockHW);
+      moveX += this.CHECKBOX_SIZE + this.CHECKBOX_MARGIN;
+    }
+    block.moveBy(moveX, cursorY);
+
     if (this.horizontalLayout_) {
       cursorX += blockHW.width + gaps[i];
     } else {
@@ -692,6 +744,76 @@ Blockly.Flyout.prototype.layoutBlocks_ = function(blocks, gaps) {
 };
 
 /**
+ * Create and place a checkbox corresponding to the given block.
+ * @param {!Blockly.Block} block The block to associate the checkbox to.
+ * @param {number} cursorX The x position of the cursor during this layout pass.
+ * @param {number} cursorY The y position of the cursor during this layout pass.
+ * @param {!{height: number, width: number}} blockHW The height and width of the
+ *     block.
+ * @private
+ */
+Blockly.Flyout.prototype.createCheckbox_ = function(block, cursorX, cursorY,
+    blockHW) {
+  var svgRoot = block.getSvgRoot();
+  var extraSpace = this.CHECKBOX_SIZE + this.CHECKBOX_MARGIN;
+  var checkboxRect = Blockly.createSvgElement('rect',
+    {
+      'class': 'blocklyFlyoutCheckbox',
+      'height': this.CHECKBOX_SIZE,
+      'width': this.CHECKBOX_SIZE,
+      'x': this.RTL ? cursorX + blockHW.width + extraSpace :
+          cursorX,
+      'y': cursorY + blockHW.height / 2 -
+          this.CHECKBOX_SIZE / 2
+    }, null);
+  var checkboxObj = {svgRoot: checkboxRect, clicked: false, block: block};
+  block.flyoutCheckbox = checkboxObj;
+  this.workspace_.getCanvas().insertBefore(checkboxRect, svgRoot);
+  this.checkboxes_.push(checkboxObj);
+};
+
+/**
+ * Respond to a click on a checkbox in the flyout.
+ * @param {!Object} checkboxObj An object containing the svg element of the
+ *    checkbox, a boolean for the state of the checkbox, and the block the
+ *    checkbox is associated with.
+ * @return {!Function} Function to call when checkbox is clicked.
+ * @private
+ */
+Blockly.Flyout.prototype.checkboxClicked_ = function(checkboxObj) {
+  return function(e) {
+    checkboxObj.clicked = !checkboxObj.clicked;
+    if (checkboxObj.clicked) {
+      Blockly.addClass_((checkboxObj.svgRoot), 'checked');
+    } else {
+      Blockly.removeClass_((checkboxObj.svgRoot), 'checked');
+    }
+    // This event has been handled.  No need to bubble up to the document.
+    e.stopPropagation();
+    e.preventDefault();
+  };
+};
+
+/**
+ * Explicitly set the clicked state of the checkbox for the given block.
+ * @param {string} blockId ID of block whose checkbox should be changed.
+ * @param {boolean} clicked True if the box should be marked clicked.
+ */
+Blockly.Flyout.prototype.setCheckboxState = function(blockId, clicked) {
+  var block = this.workspace_.getBlockById(blockId);
+  if (!block) {
+    throw 'No block found in the flyout for id ' + blockId;
+  }
+  var checkboxObj = block.flyoutCheckbox;
+  checkboxObj.clicked = clicked;
+  if (checkboxObj.clicked) {
+    Blockly.addClass_((checkboxObj.svgRoot), 'checked');
+  } else {
+    Blockly.removeClass_((checkboxObj.svgRoot), 'checked');
+  }
+};
+
+/**
  * Delete blocks and background buttons from a previous showing of the flyout.
  * @private
  */
@@ -708,6 +830,13 @@ Blockly.Flyout.prototype.clearOldBlocks_ = function() {
     goog.dom.removeNode(rect);
   }
   this.buttons_.length = 0;
+
+  // Do the same for checkboxes.
+  for (var i = 0, elem; elem = this.checkboxes_[i]; i++) {
+    elem.block.flyoutCheckbox = null;
+    goog.dom.removeNode(elem.svgRoot);
+  }
+  this.checkboxes_ = [];
 };
 
 /**
@@ -738,6 +867,11 @@ Blockly.Flyout.prototype.addBlockListeners_ = function(root, block, rect) {
       block.addSelect));
   this.listeners_.push(Blockly.bindEvent_(rect, 'mouseout', block,
       block.removeSelect));
+
+  if (block.flyoutCheckbox) {
+    this.listeners_.push(Blockly.bindEvent_(block.flyoutCheckbox.svgRoot,
+        'mousedown', null, this.checkboxClicked_(block.flyoutCheckbox)));
+  }
 };
 
 /**
@@ -765,14 +899,14 @@ Blockly.Flyout.prototype.blockMouseDown_ = function(block) {
       flyout.startDragMouseX_ = e.clientX;
       Blockly.Flyout.startDownEvent_ = e;
       Blockly.Flyout.startBlock_ = block;
-      Blockly.Flyout.startFlyout_ = flyout;
       Blockly.Flyout.onMouseUpWrapper_ = Blockly.bindEvent_(document,
-          'mouseup', this, flyout.onMouseUp_);
+          'mouseup', flyout, flyout.onMouseUp_);
       Blockly.Flyout.onMouseMoveBlockWrapper_ = Blockly.bindEvent_(document,
-          'mousemove', this, flyout.onMouseMoveBlock_);
+          'mousemove', flyout, flyout.onMouseMoveBlock_);
     }
     // This event has been handled.  No need to bubble up to the document.
     e.stopPropagation();
+    e.preventDefault();
   };
 };
 
@@ -789,7 +923,7 @@ Blockly.Flyout.prototype.onMouseDown_ = function(e) {
   Blockly.WidgetDiv.hide(true);
   Blockly.DropDownDiv.hideWithoutAnimation();
   Blockly.hideChaff(true);
-  Blockly.Flyout.terminateDrag_();
+  this.dragMode_ = Blockly.DRAG_FREE;
   this.startDragMouseY_ = e.clientY;
   this.startDragMouseX_ = e.clientX;
   Blockly.Flyout.onMouseMoveWrapper_ = Blockly.bindEvent_(document, 'mousemove',
@@ -809,11 +943,15 @@ Blockly.Flyout.prototype.onMouseDown_ = function(e) {
  * @private
  */
 Blockly.Flyout.prototype.onMouseUp_ = function(e) {
-  if (Blockly.dragMode_ != Blockly.DRAG_FREE &&
-      !Blockly.WidgetDiv.isVisible()) {
-    Blockly.Events.fire(
-        new Blockly.Events.Ui(Blockly.Flyout.startBlock_, 'click',
-                              undefined, undefined));
+  if (!this.workspace_.isDragging()) {
+    if (this.autoClose) {
+      this.createBlockFunc_(Blockly.Flyout.startBlock_)(
+          Blockly.Flyout.startDownEvent_);
+    } else if (!Blockly.WidgetDiv.isVisible()) {
+      Blockly.Events.fire(
+          new Blockly.Events.Ui(Blockly.Flyout.startBlock_, 'click',
+                                undefined, undefined));
+    }
   }
   Blockly.terminateDrag_();
 };
@@ -860,20 +998,19 @@ Blockly.Flyout.prototype.onMouseMoveBlock_ = function(e) {
      Safari Mobile 6.0 and Chrome for Android 18.0 fire rogue mousemove events
      on certain touch actions. Ignore events with these signatures.
      This may result in a one-pixel blind spot in other browsers,
-     but this shouldn't be noticable. */
+     but this shouldn't be noticeable. */
     e.stopPropagation();
     return;
   }
   var dx = e.clientX - Blockly.Flyout.startDownEvent_.clientX;
   var dy = e.clientY - Blockly.Flyout.startDownEvent_.clientY;
-
-  var createBlock = Blockly.Flyout.startFlyout_.determineDragIntention_(dx, dy);
+  var createBlock = this.determineDragIntention_(dx, dy);
   if (createBlock) {
-    Blockly.Flyout.startFlyout_.createBlockFunc_(Blockly.Flyout.startBlock_)(
+    this.createBlockFunc_(Blockly.Flyout.startBlock_)(
         Blockly.Flyout.startDownEvent_);
-  } else if (Blockly.Flyout.startFlyout_.dragMode_ == Blockly.DRAG_FREE) {
-    // Do a scroll
-    Blockly.Flyout.startFlyout_.onMouseMove_(e);
+  } else if (this.dragMode_ == Blockly.DRAG_FREE) {
+    // Do a scroll.
+    this.onMouseMove_(e);
   }
   e.stopPropagation();
 };
@@ -882,9 +1019,10 @@ Blockly.Flyout.prototype.onMouseMoveBlock_ = function(e) {
  * Determine the intention of a drag.
  * Updates dragMode_ based on a drag delta and the current mode,
  * and returns true if we should create a new block.
- * @param {number} dx X delta of the drag
- * @param {number} dy Y delta of the drag
+ * @param {number} dx X delta of the drag.
+ * @param {number} dy Y delta of the drag.
  * @return {boolean} True if a new block should be created.
+ * @private
  */
 Blockly.Flyout.prototype.determineDragIntention_ = function(dx, dy) {
   if (this.dragMode_ == Blockly.DRAG_FREE) {
@@ -892,13 +1030,13 @@ Blockly.Flyout.prototype.determineDragIntention_ = function(dx, dy) {
     return false;
   }
   var dragDistance = Math.sqrt(dx * dx + dy * dy);
-  if (dragDistance < Blockly.DRAG_RADIUS) {
-    // Still within the sticky drag radius
+  if (dragDistance < this.DRAG_RADIUS) {
+    // Still within the sticky drag radius.
     this.dragMode_ = Blockly.DRAG_STICKY;
     return false;
   } else {
-    if (this.isDragTowardWorkspace_(dx, dy)) {
-      // Immediately create a block
+    if (this.isDragTowardWorkspace_(dx, dy) || !this.scrollbar_.isVisible()) {
+      // Immediately create a block.
       return true;
     } else {
       // Immediately move to free mode - the drag is away from the workspace.
@@ -910,10 +1048,10 @@ Blockly.Flyout.prototype.determineDragIntention_ = function(dx, dy) {
 
 /**
  * Determine if a drag delta is toward the workspace, based on the position
- * and orientation of the flyout. This is used in onMouseMoveBlock_ to determine
- * if a new block should be created or if the flyout should scroll.
- * @param {number} dx X delta of the drag
- * @param {number} dy Y delta of the drag
+ * and orientation of the flyout. This is used in determineDragIntention_ to
+ * determine if a new block should be created or if the flyout should scroll.
+ * @param {number} dx X delta of the drag.
+ * @param {number} dy Y delta of the drag.
  * @return {boolean} true if the drag is toward the workspace.
  * @private
  */
@@ -922,27 +1060,27 @@ Blockly.Flyout.prototype.isDragTowardWorkspace_ = function(dx, dy) {
   var dragDirection = Math.atan2(dy, dx) / Math.PI * 180;
 
   var draggingTowardWorkspace = false;
-  var range = Blockly.Flyout.startFlyout_.dragAngleRange_;
-  if (Blockly.Flyout.startFlyout_.horizontalLayout_) {
-    if (Blockly.Flyout.startFlyout_.toolboxPosition_ == Blockly.TOOLBOX_AT_TOP) {
-      // Horizontal at top
-      if (dragDirection < 90 + range && dragDirection > 90 - range ) {
+  var range = this.dragAngleRange_;
+  if (this.horizontalLayout_) {
+    if (this.toolboxPosition_ == Blockly.TOOLBOX_AT_TOP) {
+      // Horizontal at top.
+      if (dragDirection < 90 + range && dragDirection > 90 - range) {
         draggingTowardWorkspace = true;
       }
     } else {
-      // Horizontal at bottom
+      // Horizontal at bottom.
       if (dragDirection > -90 - range && dragDirection < -90 + range) {
         draggingTowardWorkspace = true;
       }
     }
   } else {
-    if (Blockly.Flyout.startFlyout_.toolboxPosition_ == Blockly.TOOLBOX_AT_LEFT) {
-      // Vertical at left
+    if (this.toolboxPosition_ == Blockly.TOOLBOX_AT_LEFT) {
+      // Vertical at left.
       if (dragDirection < range && dragDirection > -range) {
         draggingTowardWorkspace = true;
       }
     } else {
-      // Vertical at right
+      // Vertical at right.
       if (dragDirection < -180 + range || dragDirection > 180 - range) {
         draggingTowardWorkspace = true;
       }
@@ -972,16 +1110,17 @@ Blockly.Flyout.prototype.createBlockFunc_ = function(originBlock) {
       return;
     }
     Blockly.Events.disable();
-    var block = flyout.placeNewBlock_(originBlock);
-    Blockly.Events.enable();
+    try {
+      var block = flyout.placeNewBlock_(originBlock);
+    } finally {
+      Blockly.Events.enable();
+    }
     if (Blockly.Events.isEnabled()) {
       Blockly.Events.setGroup(true);
       Blockly.Events.fire(new Blockly.Events.Create(block));
     }
     if (flyout.autoClose) {
       flyout.hide();
-    } else {
-      flyout.filterForCapacity_();
     }
     // Start a dragging operation on the new block.
     block.onMouseDown_(e);
@@ -1067,32 +1206,14 @@ Blockly.Flyout.prototype.placeNewBlock_ = function(originBlock) {
 };
 
 /**
- * Filter the blocks on the flyout to disable the ones that are above the
- * capacity limit.
- * @private
- */
-Blockly.Flyout.prototype.filterForCapacity_ = function() {
-  var filtered = false;
-  var remainingCapacity = this.targetWorkspace_.remainingCapacity();
-  var blocks = this.workspace_.getTopBlocks(false);
-  for (var i = 0, block; block = blocks[i]; i++) {
-    if (this.permanentlyDisabled_.indexOf(block) == -1) {
-      var allBlocks = block.getDescendants();
-      block.setDisabled(allBlocks.length > remainingCapacity);
-      filtered = true;
-    }
-  }
-  if (filtered) {
-    // Top-most block.  Fire an event to allow scrollbars to resize.
-    Blockly.asyncSvgResize(this.workspace);
-  }
-};
-
-/**
  * Return the deletion rectangle for this flyout in viewport coordinates.
  * @return {goog.math.Rect} Rectangle in which to delete.
  */
 Blockly.Flyout.prototype.getClientRect = function() {
+  if (!this.svgGroup_) {
+    return null;
+  }
+
   var flyoutRect = this.svgGroup_.getBoundingClientRect();
   // BIG_NUM is offscreen padding so that blocks dragged beyond the shown flyout
   // area are still deleted.  Must be larger than the largest screen size,
@@ -1122,6 +1243,7 @@ Blockly.Flyout.prototype.getClientRect = function() {
  * @private
  */
 Blockly.Flyout.terminateDrag_ = function() {
+  this.dragMode_ = Blockly.DRAG_NONE;
   if (Blockly.Flyout.onMouseUpWrapper_) {
     Blockly.unbindEvent_(Blockly.Flyout.onMouseUpWrapper_);
     Blockly.Flyout.onMouseUpWrapper_ = null;
@@ -1140,7 +1262,6 @@ Blockly.Flyout.terminateDrag_ = function() {
   }
   Blockly.Flyout.startDownEvent_ = null;
   Blockly.Flyout.startBlock_ = null;
-  Blockly.Flyout.startFlyout_ = null;
 };
 
 /**
@@ -1180,7 +1301,9 @@ Blockly.Flyout.prototype.reflowHorizontal = function(blocks) {
     }
     // Record the height for .getMetrics_ and .position.
     this.height_ = flyoutHeight;
-    Blockly.asyncSvgResize(this.workspace_);
+    // Call this since it is possible the trash and zoom buttons need
+    // to move. e.g. on a bottom positioned flyout when zoom is clicked.
+    this.targetWorkspace_.resize();
   }
 };
 
@@ -1194,6 +1317,9 @@ Blockly.Flyout.prototype.reflowVertical = function(blocks) {
   var flyoutWidth = 0;
   for (var i = 0, block; block = blocks[i]; i++) {
     var width = block.getHeightWidth().width;
+    if (block.flyoutCheckbox) {
+      width += this.CHECKBOX_SIZE + this.CHECKBOX_MARGIN;
+    }
     flyoutWidth = Math.max(flyoutWidth, width);
   }
   flyoutWidth += this.MARGIN * 1.5;
@@ -1205,9 +1331,14 @@ Blockly.Flyout.prototype.reflowVertical = function(blocks) {
       if (this.RTL) {
         // With the flyoutWidth known, right-align the blocks.
         var oldX = block.getRelativeToSurfaceXY().x;
-        var dx = flyoutWidth - this.MARGIN;
-        dx /= this.workspace_.scale;
-        block.moveBy(dx - oldX, 0);
+        var newX = flyoutWidth / this.workspace_.scale - this.MARGIN;
+        if (block.flyoutCheckbox) {
+          var checkboxX = flyoutWidth / this.workspace_.scale -
+              this.CHECKBOX_SIZE - this.CHECKBOX_MARGIN;
+          block.flyoutCheckbox.svgRoot.setAttribute('x', checkboxX);
+          newX -= (this.CHECKBOX_SIZE + this.CHECKBOX_MARGIN);
+        }
+        block.moveBy(newX - oldX, 0);
       }
       if (block.flyoutRect_) {
         block.flyoutRect_.setAttribute('width', blockHW.width);
@@ -1228,7 +1359,9 @@ Blockly.Flyout.prototype.reflowVertical = function(blocks) {
     }
     // Record the width for .getMetrics_ and .position.
     this.width_ = flyoutWidth;
-    Blockly.asyncSvgResize(this.workspace_);
+    // Call this since it is possible the trash and zoom buttons need
+    // to move. e.g. on a bottom positioned flyout when zoom is clicked.
+    this.targetWorkspace_.resize();
   }
 };
 
@@ -1236,41 +1369,16 @@ Blockly.Flyout.prototype.reflowVertical = function(blocks) {
  * Reflow blocks and their buttons.
  */
 Blockly.Flyout.prototype.reflow = function() {
+  if (this.reflowWrapper_) {
+    this.workspace_.removeChangeListener(this.reflowWrapper_);
+  }
   var blocks = this.workspace_.getTopBlocks(false);
   if (this.horizontalLayout_) {
     this.reflowHorizontal(blocks);
   } else {
     this.reflowVertical(blocks);
   }
-};
-
-/**
- * In the horizontal RTL case all of the blocks will be laid out to the left of
- * the origin, but we won't know how big the workspace is until the layout pass
- * is done.
- * Now that it's done, shunt all the blocks to be right of the origin.
- * @param {!Array<!Blockly.Block>} blocks The blocks to reposition.
- */
-Blockly.Flyout.prototype.offsetHorizontalRtlBlocks = function(blocks) {
-  if (this.horizontalLayout_ && this.RTL) {
-    // We don't know this workspace's view width yet.
-    this.position();
-    try {
-      var optionBox = this.workspace_.getCanvas().getBBox();
-    } catch (e) {
-      // Firefox has trouble with hidden elements (Bug 528969).
-      optionBox = {height: 0, y: 0, width: 0, x: 0};
-    }
-
-    var offset = Math.max(-optionBox.x + this.MARGIN,
-        this.width_ / this.workspace_.scale);
-
-    for (var i = 0, block; block = blocks[i]; i++) {
-      block.moveBy(offset, 0);
-      if (block.flyoutRect_) {
-        block.flyoutRect_.setAttribute('x',
-            offset + Number(block.flyoutRect_.getAttribute('x')));
-      }
-    }
+  if (this.reflowWrapper_) {
+    this.workspace_.addChangeListener(this.reflowWrapper_);
   }
 };

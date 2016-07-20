@@ -30,6 +30,8 @@ goog.require('Blockly.Blocks');
 
 goog.require('Blockly.Colours');
 
+goog.require('Blockly.constants');
+
 
 /**
  * Common HSV hue for all blocks in this category.
@@ -55,6 +57,7 @@ Blockly.Blocks['text'] = {
       return (parent && parent.getInputsInline() && parent.tooltip) ||
           Blockly.Msg.TEXT_TEXT_TOOLTIP;
     });
+    this.setOutputShape(Blockly.OUTPUT_SHAPE_ROUND);
   },
   /**
    * Create an image of an open or closed quote.
@@ -322,7 +325,9 @@ Blockly.Blocks['text_indexOf'] = {
       this.appendDummyInput().appendField(Blockly.Msg.TEXT_INDEXOF_TAIL);
     }
     this.setInputsInline(true);
-    this.setTooltip(Blockly.Msg.TEXT_INDEXOF_TOOLTIP);
+    var tooltip = Blockly.Msg.TEXT_INDEXOF_TOOLTIP
+        .replace('%1', Blockly.Blocks.ONE_BASED_INDEXING ? '0' : '-1');
+    this.setTooltip(tooltip);
   }
 };
 
